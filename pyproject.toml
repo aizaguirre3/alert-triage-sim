@@ -1,0 +1,27 @@
+[project]
+name = "alert-triage-sim"
+version = "0.1.0"
+description = "Alert triage and review queue prioritization simulator for fraud operations"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas==2.2.3",
+    "numpy==2.1.3",
+    "matplotlib==3.9.2",
+    "pyarrow==18.1.0",
+]
+
+[project.optional-dependencies]
+app = [
+    "streamlit==1.41.1",
+]
+dev = [
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/triage"]

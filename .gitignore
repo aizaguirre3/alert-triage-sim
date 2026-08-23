@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+.DS_Store
+
+# The alert stream is derived from IEEE-CIS data and is not redistributable.
+data/*.parquet
+data/*.json
+data/disposition_log.csv
+
+# Figures and summary tables are committed so the README renders on GitHub.
+!artifacts/figures/*.png
+!artifacts/tables/*.csv
+!artifacts/tables/*.json
