@@ -11,7 +11,6 @@ Run with:  streamlit run app/reviewer.py
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -21,10 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from triage.config import DATA, SECONDS_PER_HOUR, DEFAULT  # noqa: E402
 from triage.data import generate_synthetic_stream, load_alert_stream, select_alerts  # noqa: E402
+from triage.review_helpers import DISPOSITION_LOG, log_disposition, signal_frame  # noqa: E402
 from triage.simulator import Policy, simulate  # noqa: E402
 
 QUEUE_FILE = DATA / "simulated_queue.parquet"
-DISPOSITION_LOG = DATA / "disposition_log.csv"
 
 st.set_page_config(page_title="Fraud Alert Triage", layout="wide")
 
@@ -46,40 +45,6 @@ def load_queue() -> tuple[pd.DataFrame, str]:
         res = simulate(alerts, Policy.RISK_RANKED_AGING,
                        DEFAULT.capacity, DEFAULT.sla)
         return res.alerts, "SYNTHETIC demo data — not real model output"
-
-
-def signal_frame(row: pd.Series) -> pd.DataFrame:
-    """The contributing signals for one alert, strongest first."""
-    rows = []
-    for i in range(1, 6):
-        name = row.get(f"signal_{i}_name")
-        if name is None or pd.isna(name):
-            continue
-        contrib = row.get(f"signal_{i}_contribution", float("nan"))
-        rows.append(
-            {
-                "Signal": name,
-                "Value": row.get(f"signal_{i}_value"),
-                "Contribution": contrib,
-                "Direction": "↑ raises risk" if contrib > 0 else "↓ lowers risk",
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def log_disposition(alert_id, decision: str, note: str) -> None:
-    entry = pd.DataFrame(
-        [{
-            "logged_at": datetime.utcnow().isoformat(timespec="seconds"),
-            "transaction_id": alert_id,
-            "decision": decision,
-            "note": note,
-        }]
-    )
-    DISPOSITION_LOG.parent.mkdir(parents=True, exist_ok=True)
-    entry.to_csv(
-        DISPOSITION_LOG, mode="a", header=not DISPOSITION_LOG.exists(), index=False
-    )
 
 
 queue, source = load_queue()

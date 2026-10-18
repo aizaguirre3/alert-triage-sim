@@ -316,3 +316,32 @@ def test_the_input_frame_is_not_mutated(tiny_alerts, tiny_capacity, sla):
 def test_queue_depth_trace_is_never_negative(synthetic_alerts, sla):
     res = simulate(synthetic_alerts, Policy.RISK_RANKED_AGING, CapacityConfig(), sla)
     assert (res.queue_trace["queue_depth"] >= 0).all()
+
+
+def test_escalation_credit_does_not_bank_while_the_tier_is_empty(synthetic_alerts, sla):
+    """The reserved share is use-it-or-lose-it.
+
+    Credit for the escalated tier used to accrue on every slot, including the
+    long stretch at the start of a run before anything has aged. Once alerts
+    began ageing the banked credit was spent in one go and the tier took every
+    pick for dozens of consecutive slots -- a burst of FIFO inside risk
+    ranking. On this fixture the old behaviour produced a run of 47. With a
+    one-third share and no banking, two consecutive picks from the tier are
+    impossible, and the realised share can never exceed the configured one by
+    more than the single slot the cap allows.
+    """
+    assert sla.escalation_capacity_share == pytest.approx(1 / 3)
+    cap = CapacityConfig(n_analysts=1)
+    res = simulate(synthetic_alerts, Policy.RISK_RANKED_AGING, cap, sla)
+    served = res.reviewed.sort_values("review_order")["reviewed_via_escalation"].to_numpy()
+
+    assert served.sum() > 0  # the tier was actually exercised
+    assert not (served[1:] & served[:-1]).any(), "two consecutive escalated-tier picks"
+    assert served.sum() <= len(served) / 3 + 1
+
+
+def test_only_the_aging_policy_serves_from_the_escalated_tier(synthetic_alerts, sla):
+    cap = CapacityConfig(n_analysts=1)
+    for policy in (Policy.FIFO, Policy.RISK_RANKED):
+        res = simulate(synthetic_alerts, policy, cap, sla)
+        assert not res.alerts["reviewed_via_escalation"].any(), policy

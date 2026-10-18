@@ -162,6 +162,7 @@ def simulate(
     n_alerts = len(out)
     reviewed_at = np.full(n_alerts, np.nan)
     review_order = np.full(n_alerts, -1, dtype=np.int64)
+    via_escalation = np.zeros(n_alerts, dtype=bool)
     done = np.zeros(n_alerts, dtype=bool)
 
     # Pending alerts. Both heaps are min-heaps, so risk ranking negates the
@@ -207,12 +208,22 @@ def simulate(
         # Spend a reserved share of slots on the ageing tier. Accumulating
         # credit rather than testing slot parity keeps the realised share equal
         # to the configured one for any share, not just simple fractions.
+        #
+        # The credit is use-it-or-lose-it: while nothing has aged it is capped
+        # at one slot's worth. Letting it bank while the tier sat empty meant a
+        # quiet stretch could save up a hundred-odd slots, and the moment
+        # alerts started ageing the tier took every pick until the bank was
+        # spent -- a long burst of FIFO in the middle of risk ranking. Capping
+        # keeps the first aged alert served promptly, but only that one.
         escalation_credit += share
-        if escalated and escalation_credit >= 1.0:
+        if not escalated:
+            escalation_credit = min(escalation_credit, 1.0)
+        elif escalation_credit >= 1.0:
             while escalated:
                 _, cand = heapq.heappop(escalated)
                 if not done[cand]:
                     idx = cand
+                    via_escalation[cand] = True
                     escalation_credit -= 1.0
                     break
 
@@ -240,6 +251,11 @@ def simulate(
     out["reviewed"] = ~np.isnan(reviewed_at)
     out["reviewed_at"] = reviewed_at
     out["review_order"] = review_order
+    # Which tier served the review. Only the aging policy ever sets it; it is
+    # what lets a test check the realised escalation pattern rather than infer
+    # it from wait times, which cannot tell an aged alert popped from the risk
+    # heap apart from one served by the escalated tier.
+    out["reviewed_via_escalation"] = via_escalation
     out["wait_seconds"] = reviewed_at - arrivals
     out["wait_hours"] = out["wait_seconds"] / SECONDS_PER_HOUR
 

@@ -9,7 +9,7 @@ constraints *which alert you review first* decides how much fraud you actually
 catch and how long it sits undetected.
 
 This project simulates that queue. It consumes the scored alert stream produced
-by [`fraud-threshold-lab`](../fraud-threshold-lab), runs it through competing
+by [`fraud-threshold-lab`](https://github.com/aizaguirre3/fraud-threshold-lab), runs it through competing
 prioritization policies at a fixed analyst headcount, and measures what each
 one is worth in fraud dollars, detection latency, and SLA breaches.
 
@@ -34,8 +34,9 @@ undercut the argument are here too, and there are several.
 6. **Track SLA aging** and report breach rates per policy.
 7. **Serve a reviewer interface** showing each alert's score *and why*.
 
-Single command: `make all`. Runtime **1.0 second** for the full simulation,
-capacity sweep, and auto-disposition sweep.
+Single command: `make all`. Runtime **1.1 seconds** for the full simulation,
+capacity sweep, and auto-disposition sweep (`runtime_seconds` in
+`artifacts/tables/run_results.json`).
 
 ---
 
@@ -58,6 +59,13 @@ prioritization: when you can review nearly everything, the order barely changes
 what you catch. The interesting differences show up in *latency* at full
 capacity, and in *capture* once capacity is constrained.
 
+Two hour figures recur below and they measure different things. **739h** is
+review *supply* over the 30.8-day arrival window: 360 reviews a day at 4
+minutes each. **752h** is review work *completed*: 11,281 reviews at 4 minutes
+each, including the 24-hour drain past the last arrival during which the
+operation keeps working the queue (see Design decisions). Completed work can
+exceed in-window supply only because of that drain.
+
 ## Policies
 
 - **FIFO** — first in, first out. The manual baseline.
@@ -76,13 +84,13 @@ capacity, and in *capture* once capacity is constrained.
 | Alerts reviewed | 11,281 (99.1%) | 11,281 | 11,281 |
 | Fraud caught | 2,339 (98.7%) | **2,368 (100.0%)** | 2,360 (99.6%) |
 | Fraud dollars caught | $353,473 (97.8%) | **$361,292 (100.0%)** | $358,764 (99.3%) |
-| **Median time to detection** | 31.5h | **9.8h** | 10.9h |
+| **Median time to detection** | 31.5h | **9.8h** | 10.8h |
 | p90 time to detection | 39.0h | **16.5h** | 23.2h |
 | **Worst wait, any alert** | **47.7h** | 741.9h | 91.8h |
 | SLA breach rate (24h) | 60.7% | **10.3%** | 35.9% |
 
 **At near-parity capacity, prioritization is a latency story, not a capture
-story.** All three policies review the same 11,281 alerts and FIFO still catches
+story.** All three policies review the same number of alerts (11,281) and FIFO still catches
 97.8% of fraud dollars. What changes is speed: risk ranking cuts median time to
 detection from 31.5 hours to 9.8, a **3.2x improvement**, and drops SLA breaches
 from 60.7% to 10.3%.
@@ -116,7 +124,10 @@ capacity degenerates into FIFO on a backlogged queue, because every alert ages
 past the escalation point before anyone reaches it. Measured on the synthetic
 stream, an unshared tier reproduced FIFO's output exactly. Reserving a fixed
 third fixes it, and there is a test asserting both endpoints: share 0 reproduces
-pure risk ranking, share 1 reproduces FIFO.
+pure risk ranking, share 1 reproduces FIFO. The reserved credit is also
+use-it-or-lose-it: it cannot bank while nothing has aged, so a quiet first day
+cannot be followed by a long burst of escalated picks. A test asserts the tier
+never takes two consecutive reviews at the one-third share.
 
 ### Capacity sweep — where prioritization actually pays
 
@@ -124,9 +135,9 @@ Percentage of fraud **dollars** caught, by policy and staffing level:
 
 | Capacity | Analyst hours | FIFO | Risk-ranked | Aging |
 |---|---|---|---|---|
-| 10% | 77h | 6.7% | **25.6%** | 18.9% |
-| 20% | 153h | 17.3% | **47.2%** | 33.9% |
-| 30% | 229h | 24.7% | **62.7%** | 52.9% |
+| 10% | 77h | 6.7% | **25.6%** | 19.0% |
+| 20% | 153h | 17.3% | **47.2%** | 34.2% |
+| 30% | 229h | 24.7% | **62.7%** | 53.2% |
 | 50% | 379h | 40.1% | **78.9%** | 73.4% |
 | 70% | 529h | 59.8% | **89.0%** | 84.5% |
 | 85% | 640h | 78.9% | **96.1%** | 92.4% |
@@ -141,11 +152,15 @@ what FIFO achieves:
 
 | FIFO at | FIFO capture | Risk-ranked needs | Hours saved | Capacity cut |
 |---|---|---|---|---|
-| 30% (229h) | 24.7% | 77h | 152h | **67%** |
+| 30% (229h) | 24.7% | ≤77h | ≥152h | **≥67%** |
 | 50% (379h) | 40.1% | 127h | 252h | **67%** |
 | 70% (529h) | 59.8% | 214h | 315h | **60%** |
 | 85% (640h) | 78.9% | 380h | 261h | **41%** |
 | 100% (752h) | 97.8% | 693h | 59h | **8%** |
+
+The 30% row is a bound, not a crossover. The sweep's floor is 10% capacity
+(77h), and risk-ranked review already catches 25.6% of fraud dollars there,
+above the 24.7% target, so the true equivalent sits somewhere below 77h.
 
 The saving shrinks as staffing rises, and that is the honest shape of it. A
 fully staffed operation gains 8%. A stretched one gains two thirds. Prioritizing
@@ -163,16 +178,16 @@ Closing low-risk alerts without human review, denominators held against the
 |---|---|---|---|---|---|
 | 0% | 0 | 752h | — | 99.3% | 35.9% |
 | 5% | 570 | 721h | 31h | 98.7% | 12.2% |
-| **10%** | **1,139** | **683h** | **69h** | **97.1%** | **3.4%** |
+| **10%** | **1,139** | **683h** | **69h** | **97.1%** | **3.5%** |
 | 15% | 1,708 | 645h | 107h | 96.0% | 1.1% |
-| 20% | 2,277 | 607h | 145h | 93.4% | 0.2% |
+| 20% | 2,277 | 607h | 145h | 93.4% | 0.3% |
 | 30% | 3,415 | 531h | 221h | 89.0% | 0.0% |
 | 50% | 5,692 | 379h | 373h | 79.3% | 0.0% |
 
 Under a 2% capture-loss tolerance the selected band closes 5% of alerts and
 saves 31 hours. The more interesting row is 10%: giving up **2.2 points** of
 fraud capture buys back 69 analyst hours *and* collapses the SLA breach rate
-from 35.9% to 3.4%.
+from 35.9% to 3.5%.
 
 That second effect is the one arithmetic alone misses. Auto-closing does not
 only remove work — it frees capacity for everything else in the queue, so the
@@ -283,7 +298,7 @@ make data       # copy the exported alert stream from ../fraud-threshold-lab
 make synthetic  # or: generate a synthetic stand-in stream
 make run        # full simulation -> artifacts/
 make app        # launch the Streamlit reviewer interface
-make test       # 56 tests
+make test       # 63 tests
 ```
 
 Outputs land in `artifacts/tables/` (CSV plus `run_results.json` holding every
@@ -291,7 +306,7 @@ number in this README) and `artifacts/figures/`.
 
 ### Testing
 
-56 tests on Python 3.11 and 3.12 in CI, using synthetic fixtures only — the
+63 tests on Python 3.11 and 3.12 in CI, using synthetic fixtures only — the
 Kaggle-derived stream is not redistributable and none of the queue logic needs
 it. The tests concentrate on what a reviewer would question:
 
@@ -300,10 +315,14 @@ it. The tests concentrate on what a reviewer would question:
 - all policies reviewing identical alert counts
 - the escalation share reproducing pure risk ranking at 0 and FIFO at 1, and
   moving monotonically between them
+- escalation credit never banking while the tier is empty, so the aging tier
+  never takes two consecutive picks at the one-third share
 - prioritization beating FIFO under constraint **and** making no difference when
   capacity is ample — the guard against overselling it
 - auto-closed fraud counting against capture
 - capacity equivalence saving nothing when a policy is compared against itself
+- the reviewer interface's helpers (signal attribution table, disposition log),
+  imported without Streamlit
 
 ---
 
@@ -316,16 +335,17 @@ src/triage/
   metrics.py          outcomes, capacity sweep, policy equivalence
   autodisposition.py  auto-close band and tradeoff curve
   data.py             stream loading + synthetic generator
+  review_helpers.py   reviewer-interface helpers, importable without Streamlit
   plots.py            figures
 app/reviewer.py       Streamlit reviewer interface
 scripts/              run_simulation.py, fetch_stream.py
-tests/                56 tests, synthetic fixtures only
+tests/                63 tests, synthetic fixtures only
 ```
 
 ## Upstream
 
 Alert stream and TreeSHAP attributions come from
-[`fraud-threshold-lab`](../fraud-threshold-lab), which scores IEEE-CIS
+[`fraud-threshold-lab`](https://github.com/aizaguirre3/fraud-threshold-lab), which scores IEEE-CIS
 transactions with a time-aware split and selects the operating threshold by
 expected cost. The threshold used here (0.0248) is that project's cost-optimal
 point.

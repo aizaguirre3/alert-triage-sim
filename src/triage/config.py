@@ -75,6 +75,12 @@ class SLAConfig:
     Reserving a fixed share instead means ageing bounds starvation without
     destroying the risk ordering, which is how a real triage desk runs: one
     analyst works the ageing tail while the rest work the highest-risk items.
+
+    The share is use-it-or-lose-it. Credit for the escalated tier does not
+    accumulate while nothing has aged, so a quiet stretch cannot bank slots
+    that the tier then spends in one long FIFO burst the moment alerts start
+    ageing. The realised share is therefore at most the configured one, and
+    lower whenever the tier sits empty.
     """
 
     deadline_hours: float = 24.0
